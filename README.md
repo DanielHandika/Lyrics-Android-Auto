@@ -34,7 +34,7 @@ Saat memutar musik lewat Spotify di Android Auto, layar mobil biasanya hanya men
 
 ---
 
-## Kredit & Ucapan Terima Kasih
+## Kredit & Terima Kasih
 
 Terima kasih sebesar-besarnya kepada **[LRCLIB](https://lrclib.net)** beserta pembuatnya **[@tranxuanthang](https://github.com/tranxuanthang)** (repository: [tranxuanthang/lrclib](https://github.com/tranxuanthang/lrclib)) dan seluruh kontributor komunitasnya yang telah menyediakan layanan database lirik secara gratis, lengkap, dan terbuka.
 
