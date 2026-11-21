@@ -31,3 +31,11 @@ Saat memutar musik lewat Spotify di Android Auto, layar mobil biasanya hanya men
 3. **Hubungkan HP ke mobil**, buka daftar aplikasi di layar Android Auto, pilih **spotify lirik v1**, lalu buka menu **Lirik**.
 
 > **Catatan:** Utamakan keselamatan berkendara. Gunakan tampilan lirik dengan bijak atau hanya untuk penumpang saat mobil berjalan.
+
+---
+
+## Kredit & Ucapan Terima Kasih
+
+Terima kasih sebesar-besarnya kepada **[LRCLIB](https://lrclib.net)** beserta pembuatnya **[@tranxuanthang](https://github.com/tranxuanthang)** (repository: [tranxuanthang/lrclib](https://github.com/tranxuanthang/lrclib)) dan seluruh kontributor komunitasnya yang telah menyediakan layanan database lirik secara gratis, lengkap, dan terbuka.
+
+Seluruh lirik lagu (baik lirik tersinkronisasi maupun lirik teks) yang ditampilkan pada aplikasi ini diambil menggunakan API dari **LRCLIB**.
