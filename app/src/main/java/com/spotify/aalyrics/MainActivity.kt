@@ -8,6 +8,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.spotify.aalyrics.listener.SpotifyTrack
@@ -15,60 +16,56 @@ import com.spotify.aalyrics.listener.SpotifyTrackListener
 import com.spotify.aalyrics.repository.LyricsRepository
 import com.spotify.aalyrics.service.LyricsMediaBrowserService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var statusPermText: TextView
+    private lateinit var statusBroadcastText: TextView
     private lateinit var liveTrackText: TextView
     private lateinit var liveLyricsText: TextView
-    private lateinit var btnPermission: Button
+    private var lyricsFetchJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        SpotifyTrackListener.init(applicationContext)
         setContentView(createLayout())
 
-        observeCurrentTrack()
+        observeBroadcastState()
     }
 
-    override fun onResume() {
-        super.onResume()
-        updatePermissionStatus()
-    }
-
-    private fun isNotificationServiceEnabled(): Boolean {
-        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
-        return flat?.contains(packageName) == true
-    }
-
-    private fun updatePermissionStatus() {
-        val isGranted = isNotificationServiceEnabled()
-        SpotifyLyricsApp.notificationPermissionGranted = isGranted
-
-        if (isGranted) {
-            statusPermText.text = "✅ Akses Notifikasi: SUDAH DIAKTIFKAN"
-            statusPermText.setTextColor(0xFF2E7D32.toInt()) // Dark Green
-            btnPermission.text = "Pengaturan Akses Notifikasi (Sudah Aktif)"
-        } else {
-            statusPermText.text = "⚠️ Akses Notifikasi: BELUM AKTIF\n(Aplikasi belum bisa membaca lagu dari Spotify)"
-            statusPermText.setTextColor(0xFFC62828.toInt()) // Dark Red
-            btnPermission.text = "1. Aktifkan Akses Notifikasi Sekarang"
-        }
-    }
-
-    private fun observeCurrentTrack() {
+    private fun observeBroadcastState() {
         lifecycleScope.launch {
-            SpotifyTrackListener.currentTrackFlow.collectLatest { track ->
-                updateTrackUI(track ?: LyricsMediaBrowserService.lastTrack)
+            combine(
+                SpotifyTrackListener.hasReceivedBroadcast,
+                SpotifyTrackListener.currentTrackFlow
+            ) { hasBroadcast, track ->
+                hasBroadcast to (track ?: LyricsMediaBrowserService.lastTrack)
+            }.collectLatest { (hasBroadcast, track) ->
+                updateBroadcastStatus(hasBroadcast)
+                updateTrackUI(track)
             }
         }
     }
 
+    private fun updateBroadcastStatus(hasReceivedBroadcast: Boolean) {
+        if (hasReceivedBroadcast) {
+            statusBroadcastText.text = "✅ Terhubung dengan Broadcast Spotify\n(Tanpa izin sensitif • Berjalan normal)"
+            statusBroadcastText.setTextColor(0xFF2E7D32.toInt())
+        } else {
+            statusBroadcastText.text = "ℹ️ Mode: Spotify Device Broadcast Status\n(Tanpa izin sensitif • Menunggu sinyal dari Spotify)"
+            statusBroadcastText.setTextColor(0xFF1565C0.toInt())
+        }
+    }
+
     private fun updateTrackUI(track: SpotifyTrack?) {
+        lyricsFetchJob?.cancel()
+
         if (track == null) {
-            liveTrackText.text = "🎵 Menunggu Spotify...\n(Putar lagu di aplikasi Spotify untuk mengetes)"
+            liveTrackText.text = "🎵 Menunggu Spotify...\n(Putar lagu di Spotify setelah mengaktifkan Device Broadcast Status)"
             liveLyricsText.text = ""
             return
         }
@@ -76,7 +73,7 @@ class MainActivity : AppCompatActivity() {
         liveTrackText.text = "🎶 Sedang Diputar:\n${track.title}\nOleh: ${track.artist}"
         liveLyricsText.text = "Memuat lirik dari LRCLIB..."
 
-        lifecycleScope.launch {
+        lyricsFetchJob = lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 LyricsRepository.fetchLyrics(track.title, track.artist)
             }
@@ -108,20 +105,44 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, 16)
         }
 
-        statusPermText = TextView(this).apply {
+        statusBroadcastText = TextView(this).apply {
             textSize = 15f
             setTypeface(null, android.graphics.Typeface.BOLD)
             gravity = Gravity.CENTER
             setPadding(0, 8, 0, 24)
         }
 
-        btnPermission = Button(this).apply {
+        val spotifyGuideCard = TextView(this).apply {
+            text = "🎧 AKTIFKAN DEVICE BROADCAST STATUS DI SPOTIFY:\n" +
+                    "(Aplikasi tidak memerlukan izin Akses Notifikasi)\n\n" +
+                    "1. Buka aplikasi Spotify -> ketuk foto profil di pojok kiri atas\n" +
+                    "2. Pilih 'Settings and privacy' (Pengaturan dan privasi)\n" +
+                    "3. Scroll ke bagian 'Apps and devices' / 'Devices'\n" +
+                    "4. Aktifkan toggle 'Device Broadcast Status' (Status Siaran Perangkat)\n" +
+                    "5. Putar lagu di Spotify (jika lagu sudah berjalan, jeda lalu putar ulang sekali)"
+            textSize = 13f
+            setPadding(32, 32, 32, 32)
+            setBackgroundColor(0xFFE3F2FD.toInt())
+            setTextColor(0xFF1A237E.toInt())
+        }
+
+        val btnOpenSpotify = Button(this).apply {
+            text = "1. Buka Spotify (Aktifkan Device Broadcast Status)"
             setOnClickListener {
-                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                val spotifyIntent = packageManager.getLaunchIntentForPackage("com.spotify.music")
+                if (spotifyIntent != null) {
+                    startActivity(spotifyIntent)
+                } else {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Aplikasi Spotify belum terpasang di perangkat ini.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
         }
 
-        val guideCard = TextView(this).apply {
+        val aaGuideCard = TextView(this).apply {
             text = "📱 SYARAT ANDROID AUTO AGAR TERDETEKSI DI MOBIL:\n\n" +
                     "1. Buka Pengaturan HP -> Cari 'Android Auto'\n" +
                     "2. Scroll ke paling bawah ke bagian 'Version'\n" +
@@ -146,16 +167,6 @@ class MainActivity : AppCompatActivity() {
                     } catch (_: Exception) {
                         startActivity(Intent(Settings.ACTION_SETTINGS))
                     }
-                }
-            }
-        }
-
-        val btnOpenSpotify = Button(this).apply {
-            text = "3. Buka Aplikasi Spotify"
-            setOnClickListener {
-                val spotifyIntent = packageManager.getLaunchIntentForPackage("com.spotify.music")
-                if (spotifyIntent != null) {
-                    startActivity(spotifyIntent)
                 }
             }
         }
@@ -186,13 +197,14 @@ class MainActivity : AppCompatActivity() {
         testBox.addView(liveLyricsText)
 
         layout.addView(title)
-        layout.addView(statusPermText)
-        layout.addView(btnPermission)
+        layout.addView(statusBroadcastText)
+        layout.addView(spotifyGuideCard)
+        layout.addView(TextView(this).apply { height = 16 })
+        layout.addView(btnOpenSpotify)
         layout.addView(TextView(this).apply { height = 24 })
-        layout.addView(guideCard)
+        layout.addView(aaGuideCard)
         layout.addView(TextView(this).apply { height = 16 })
         layout.addView(btnAA)
-        layout.addView(btnOpenSpotify)
         layout.addView(TextView(this).apply { height = 32 })
         layout.addView(testBox)
 

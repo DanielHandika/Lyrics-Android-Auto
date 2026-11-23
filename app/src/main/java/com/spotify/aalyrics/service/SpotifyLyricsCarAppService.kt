@@ -7,6 +7,7 @@ import androidx.car.app.Screen
 import androidx.car.app.Session
 import androidx.car.app.validation.HostValidator
 import com.spotify.aalyrics.listener.SpotifyTrack
+import com.spotify.aalyrics.listener.SpotifyTrackListener
 import com.spotify.aalyrics.screen.LyricsScreen
 
 /**
@@ -71,6 +72,10 @@ class SpotifyLyricsCarAppService : CarAppService() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        SpotifyTrackListener.init(applicationContext)
+        if (lastTrack == null) {
+            lastTrack = SpotifyTrackListener.currentTrackFlow.value
+        }
         Log.d(TAG, "SpotifyLyricsCarAppService created")
     }
 

@@ -10,6 +10,7 @@ import androidx.media.MediaBrowserServiceCompat
 import androidx.media.utils.MediaConstants
 import com.spotify.aalyrics.R
 import com.spotify.aalyrics.listener.SpotifyTrack
+import com.spotify.aalyrics.listener.SpotifyTrackListener
 import com.spotify.aalyrics.repository.LyricsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,7 +57,8 @@ class LyricsMediaBrowserService : MediaBrowserServiceCompat() {
 
         setSessionToken(mediaSession.sessionToken)
 
-        lastTrack?.let { onTrackChanged(it) }
+        SpotifyTrackListener.init(applicationContext)
+        (SpotifyTrackListener.currentTrackFlow.value ?: lastTrack)?.let { onTrackChanged(it) }
     }
 
     override fun onGetRoot(
@@ -106,7 +108,7 @@ class LyricsMediaBrowserService : MediaBrowserServiceCompat() {
                 buildMediaItem(
                     mediaId = "info_no_track",
                     title = getString(R.string.no_track_playing),
-                    subtitle = "Putar lagu di Spotify",
+                    subtitle = getString(R.string.no_track_playing_subtitle),
                     flags = MediaBrowserCompat.MediaItem.FLAG_PLAYABLE
                 )
             )

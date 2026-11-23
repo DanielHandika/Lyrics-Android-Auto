@@ -1,24 +1,17 @@
 package com.spotify.aalyrics.listener
 
-import android.app.Notification
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
-import android.graphics.drawable.BitmapDrawable
-import android.graphics.drawable.Icon
-import android.os.Build
-import android.service.notification.NotificationListenerService
-import android.service.notification.StatusBarNotification
 import android.util.Log
-import androidx.core.app.NotificationManagerCompat
-import com.spotify.aalyrics.SpotifyLyricsApp
+import androidx.core.content.ContextCompat
 import com.spotify.aalyrics.service.LyricsMediaBrowserService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import com.spotify.aalyrics.service.SpotifyLyricsCarAppService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 
 /**
  * Data class representing a currently playing Spotify track.
@@ -31,174 +24,171 @@ data class SpotifyTrack(
 )
 
 /**
- * NotificationListenerService that watches Spotify's "Now Playing" notification
- * to extract currently playing track metadata (title, artist, album art, duration).
+ * BroadcastReceiver that listens to Spotify's built-in "Device Broadcast Status"
+ * (metadatachanged, playbackstatechanged, queuechanged) without requiring any
+ * sensitive permissions such as NotificationListenerService.
  */
-class SpotifyTrackListener : NotificationListenerService() {
+class SpotifyTrackListener : BroadcastReceiver() {
 
-    private val logTag = "SpotifyTrackListener"
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    override fun onReceive(context: Context, intent: Intent?) {
+        val action = intent?.action ?: return
 
-    // Track currently observed by this listener instance
-    private var currentTrack: SpotifyTrack? = null
+        when (action) {
+            ACTION_METADATA_CHANGED -> {
+                _hasReceivedBroadcast.value = true
+                val track = parseTrackFromIntent(intent)
+                if (track != null) {
+                    Log.d(TAG, "Metadata broadcast: ${track.title} - ${track.artist}")
+                    handleTrackUpdate(context, track)
+                }
+            }
+            ACTION_PLAYBACK_STATE_CHANGED -> {
+                _hasReceivedBroadcast.value = true
+                val isPlaying = intent.getBooleanExtra("playing", false)
+                _isPlayingFlow.value = isPlaying
+                Log.d(TAG, "Playback state broadcast: playing=$isPlaying")
+
+                // Some Spotify versions bundle track metadata with playback state broadcasts
+                val track = parseTrackFromIntent(intent)
+                if (track != null) {
+                    handleTrackUpdate(context, track)
+                }
+                // Keep last track and lyrics visible even when playback is paused
+            }
+            ACTION_QUEUE_CHANGED -> {
+                _hasReceivedBroadcast.value = true
+                Log.d(TAG, "Queue changed broadcast received")
+            }
+        }
+    }
 
     companion object {
         private const val TAG = "SpotifyTrackListener"
-        private const val SPOTIFY_PACKAGE = "com.spotify.music"
 
-        // Observable StateFlow so MainActivity and other components can observe track changes
+        const val ACTION_METADATA_CHANGED = "com.spotify.music.metadatachanged"
+        const val ACTION_PLAYBACK_STATE_CHANGED = "com.spotify.music.playbackstatechanged"
+        const val ACTION_QUEUE_CHANGED = "com.spotify.music.queuechanged"
+
+        private const val PREFS_NAME = "spotify_broadcast_prefs"
+        private const val KEY_TITLE = "last_track_title"
+        private const val KEY_ARTIST = "last_track_artist"
+        private const val KEY_DURATION_MS = "last_track_duration_ms"
+
         private val _currentTrackFlow = MutableStateFlow<SpotifyTrack?>(null)
         val currentTrackFlow: StateFlow<SpotifyTrack?> = _currentTrackFlow.asStateFlow()
 
-        var isServiceConnected: Boolean = false
-            private set
-    }
+        private val _isPlayingFlow = MutableStateFlow(false)
+        val isPlayingFlow: StateFlow<Boolean> = _isPlayingFlow.asStateFlow()
 
-    override fun onListenerConnected() {
-        super.onListenerConnected()
-        isServiceConnected = true
-        Log.d(TAG, "NotificationListener connected")
-        SpotifyLyricsApp.notificationPermissionGranted = true
+        private val _hasReceivedBroadcast = MutableStateFlow(false)
+        val hasReceivedBroadcast: StateFlow<Boolean> = _hasReceivedBroadcast.asStateFlow()
 
-        // Try to read existing active notifications to catch Spotify if it's already playing
-        scope.launch {
-            try {
-                val activeNotifications = activeNotifications ?: return@launch
-                for (sbn in activeNotifications) {
-                    if (sbn.packageName == SPOTIFY_PACKAGE) {
-                        val track = extractTrack(sbn.notification)
-                        if (track != null) {
-                            Log.d(TAG, "Discovered active Spotify track on connect: ${track.title} - ${track.artist}")
-                            currentTrack = track
-                            _currentTrackFlow.value = track
-                            LyricsMediaBrowserService.updateTrack(track)
-                            break
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Error checking active notifications on connect", e)
-            }
-        }
-    }
+        @Volatile
+        private var isDynamicReceiverRegistered = false
+        private var dynamicReceiver: SpotifyTrackListener? = null
 
-    override fun onListenerDisconnected() {
-        super.onListenerDisconnected()
-        isServiceConnected = false
-        Log.d(TAG, "NotificationListener disconnected")
-    }
+        /**
+         * Idempotently restore the last saved track and register a dynamic receiver
+         * with RECEIVER_EXPORTED so implicit Spotify broadcasts work on Android 8.0–14+.
+         */
+        @Synchronized
+        fun init(context: Context) {
+            val appContext = context.applicationContext
 
-    override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        if (sbn == null || sbn.packageName != SPOTIFY_PACKAGE) {
-            return
-        }
-
-        scope.launch {
-            val notification = sbn.notification ?: return@launch
-            val track = extractTrack(notification)
-
-            if (track != null) {
-                if (currentTrack == null ||
-                    currentTrack?.title != track.title ||
-                    currentTrack?.artist != track.artist
-                ) {
-                    Log.d(logTag, "Track changed: ${track.title} - ${track.artist}")
-                    currentTrack = track
-                    _currentTrackFlow.value = track
-                    SpotifyLyricsApp.notificationPermissionGranted = hasNotificationPermission()
-                    LyricsMediaBrowserService.updateTrack(track)
+            if (_currentTrackFlow.value == null) {
+                val restored = restoreLastTrack(appContext)
+                if (restored != null) {
+                    _currentTrackFlow.value = restored
+                    LyricsMediaBrowserService.updateTrack(restored)
+                    SpotifyLyricsCarAppService.updateTrack(restored)
+                    Log.d(TAG, "Restored last track from prefs: ${restored.title} - ${restored.artist}")
                 }
             }
-        }
-    }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        if (sbn == null || sbn.packageName != SPOTIFY_PACKAGE) {
-            return
-        }
-
-        val notification = sbn.notification
-        val isMediaNotification = notification?.category == Notification.CATEGORY_TRANSPORT ||
-            notification?.extras?.containsKey(Notification.EXTRA_MEDIA_SESSION) == true
-        if (!isMediaNotification) {
-            return
-        }
-
-        scope.launch {
-            currentTrack = null
-            _currentTrackFlow.value = null
-            LyricsMediaBrowserService.clearTrack()
-        }
-    }
-
-    /**
-     * Extract track info from Spotify's now-playing notification.
-     * Robust extraction that never fails if album art is missing or non-Bitmap.
-     */
-    private fun extractTrack(notification: Notification): SpotifyTrack? {
-        val extras = notification.extras ?: return null
-
-        // In Android MediaStyle notifications:
-        // EXTRA_TITLE = Track Title
-        // EXTRA_TEXT = Artist Name
-        // EXTRA_SUB_TEXT = Album Name
-        val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-            ?: extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-
-        val artist = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-            ?: extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString()?.trim()
-            ?: extras.getCharSequence("android.summaryText")?.toString()?.trim()
-
-        // If no title could be determined, this is not a valid track notification
-        if (title.isNullOrBlank()) {
-            return null
-        }
-
-        // Extract artwork safely without throwing or returning null if unavailable
-        val artwork: Bitmap? = extractArtwork(extras)
-
-        val duration = extras.getLong("android.duration", -1)
-
-        return SpotifyTrack(
-            title = title,
-            artist = if (!artist.isNullOrBlank() && artist != title) artist else "Spotify",
-            albumArt = artwork,
-            durationMs = if (duration > 0) duration else null
-        )
-    }
-
-    @Suppress("DEPRECATION")
-    private fun extractArtwork(extras: android.os.Bundle): Bitmap? {
-        return try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                extras.getParcelable("android.largeIcon", Bitmap::class.java)
-            } else {
-                extras.getParcelable("android.largeIcon")
-            }
-        } catch (e: Exception) {
-            try {
-                // If largeIcon is stored as an Icon object
-                val icon = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    extras.getParcelable("android.largeIcon.big", Icon::class.java)
-                } else {
-                    extras.getParcelable("android.largeIcon.big")
+            if (!isDynamicReceiverRegistered) {
+                val filter = IntentFilter().apply {
+                    addAction(ACTION_METADATA_CHANGED)
+                    addAction(ACTION_PLAYBACK_STATE_CHANGED)
+                    addAction(ACTION_QUEUE_CHANGED)
                 }
-                val drawable = icon?.loadDrawable(this)
-                if (drawable is BitmapDrawable) {
-                    drawable.bitmap
-                } else null
-            } catch (_: Exception) {
-                null
+                val receiver = SpotifyTrackListener()
+                ContextCompat.registerReceiver(
+                    appContext,
+                    receiver,
+                    filter,
+                    ContextCompat.RECEIVER_EXPORTED
+                )
+                dynamicReceiver = receiver
+                isDynamicReceiverRegistered = true
+                Log.d(TAG, "Dynamic Spotify broadcast receiver registered")
             }
         }
-    }
 
-    private fun hasNotificationPermission(): Boolean {
-        return NotificationManagerCompat.from(this).areNotificationsEnabled()
-    }
+        /**
+         * Extract Spotify track metadata from a Spotify broadcast Intent.
+         */
+        fun parseTrackFromIntent(intent: Intent): SpotifyTrack? {
+            val title = intent.getStringExtra("track")?.trim()
+            if (title.isNullOrBlank()) {
+                return null
+            }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        scope.cancel()
+            val rawArtist = intent.getStringExtra("artist")?.trim()
+            val artist = if (!rawArtist.isNullOrBlank()) rawArtist else "Spotify"
+
+            var lengthMs = intent.getIntExtra("length", -1).toLong()
+            if (lengthMs <= 0L) {
+                lengthMs = intent.getLongExtra("length", -1L)
+            }
+
+            return SpotifyTrack(
+                title = title,
+                artist = artist,
+                albumArt = null,
+                durationMs = if (lengthMs > 0L) lengthMs else null
+            )
+        }
+
+        private fun handleTrackUpdate(context: Context, track: SpotifyTrack) {
+            val current = _currentTrackFlow.value
+            val isSameTrack = current != null &&
+                current.title == track.title &&
+                current.artist == track.artist
+            val hasNewDuration = current?.durationMs == null && track.durationMs != null
+
+            if (isSameTrack && !hasNewDuration) {
+                return
+            }
+
+            _currentTrackFlow.value = track
+            saveLastTrack(context.applicationContext, track)
+            LyricsMediaBrowserService.updateTrack(track)
+            SpotifyLyricsCarAppService.updateTrack(track)
+        }
+
+        private fun saveLastTrack(context: Context, track: SpotifyTrack) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_TITLE, track.title)
+                .putString(KEY_ARTIST, track.artist)
+                .putLong(KEY_DURATION_MS, track.durationMs ?: -1L)
+                .apply()
+        }
+
+        private fun restoreLastTrack(context: Context): SpotifyTrack? {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val title = prefs.getString(KEY_TITLE, null)?.trim()
+            if (title.isNullOrBlank()) {
+                return null
+            }
+            val artist = prefs.getString(KEY_ARTIST, null)?.trim()
+            val durationMs = prefs.getLong(KEY_DURATION_MS, -1L)
+            return SpotifyTrack(
+                title = title,
+                artist = if (!artist.isNullOrBlank()) artist else "Spotify",
+                albumArt = null,
+                durationMs = if (durationMs > 0L) durationMs else null
+            )
+        }
     }
 }

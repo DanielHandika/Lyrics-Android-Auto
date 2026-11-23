@@ -32,15 +32,17 @@
             android:name="com.google.android.gms.car.application"
             android:resource="@xml/automotive_app_desc" />
 
-        <!-- Notification Listener to track Spotify currently playing -->
-        <service
+        <!-- Broadcast Receiver to track Spotify Device Broadcast Status (no sensitive permissions required) -->
+        <receiver
             android:name=".listener.SpotifyTrackListener"
-            android:exported="true"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            android:enabled="true"
+            android:exported="true">
             <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
+                <action android:name="com.spotify.music.metadatachanged" />
+                <action android:name="com.spotify.music.playbackstatechanged" />
+                <action android:name="com.spotify.music.queuechanged" />
             </intent-filter>
-        </service>
+        </receiver>
 
         <!-- Main companion activity on phone -->
         <activity
