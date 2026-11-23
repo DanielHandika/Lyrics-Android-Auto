@@ -12,7 +12,7 @@ Saat memutar musik lewat Spotify di Android Auto, layar mobil biasanya hanya men
 
 ## Cara Kerja Singkat
 
-1. Kamu mengaktifkan fitur bawaan **Device Broadcast Status** di pengaturan **Spotify** (tanpa perlu memberikan izin sensitif Akses Notifikasi).
+1. Kamu mengaktifkan fitur bawaan **Device Broadcast Status** di pengaturan **Spotify**.
 2. Saat kamu memutar lagu di **Spotify**, Spotify mengirimkan broadcast judul lagu dan nama penyanyi ke aplikasi ini secara otomatis.
 3. Lirik lagu langsung diambil dari internet dan ditampilkan di layar HP maupun di layar **Android Auto** mobilmu.
 
