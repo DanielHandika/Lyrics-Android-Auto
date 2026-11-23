@@ -3,11 +3,9 @@
     <string name="service_name">Spotify AA Lyrics Service</string>
     <string name="notification_channel_name">Lyrics Notification</string>
     <string name="notification_channel_description">Channel untuk notifikasi lirik Spotify di Android Auto</string>
-    <string name="permission_notification_listener_title">Izin Notification Listener</string>
-    <string name="permission_notification_listener_summary">Aktifkan untuk membaca info lagu dari Spotify</string>
     <string name="lyrics_not_found">Lirik tidak ditemukan</string>
     <string name="lyrics_loading">Memuat lirik…</string>
     <string name="no_track_playing">Tidak ada lagu yang diputar</string>
+    <string name="no_track_playing_subtitle">Putar lagu di Spotify (pastikan Device Broadcast Status aktif)</string>
     <string name="open_spotify">Buka Spotify</string>
-    <string name="enable_notification_access">Aktifkan Akses Notifikasi</string>
 </resources>
