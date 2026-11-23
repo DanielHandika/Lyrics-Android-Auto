@@ -1,6 +1,9 @@
 package com.spotify.aalyrics
 
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
@@ -159,15 +162,7 @@ class MainActivity : AppCompatActivity() {
         val btnAA = Button(this).apply {
             text = "2. Buka Pengaturan Android Auto"
             setOnClickListener {
-                try {
-                    startActivity(Intent("com.google.android.projection.gearhead.settings.START_SETTINGS"))
-                } catch (_: Exception) {
-                    try {
-                        startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
-                    } catch (_: Exception) {
-                        startActivity(Intent(Settings.ACTION_SETTINGS))
-                    }
-                }
+                openAndroidAutoSettings()
             }
         }
 
@@ -210,5 +205,70 @@ class MainActivity : AppCompatActivity() {
 
         scrollView.addView(layout)
         return scrollView
+    }
+
+    /**
+     * Opens Android Auto's settings screen directly without falling back to phone Developer Options.
+     */
+    private fun openAndroidAutoSettings() {
+        val directIntents = listOfNotNull(
+            Intent(Intent.ACTION_APPLICATION_PREFERENCES).setPackage(ANDROID_AUTO_PACKAGE),
+            Intent().setClassName(ANDROID_AUTO_PACKAGE, ANDROID_AUTO_SETTINGS_ACTIVITY),
+            packageManager.getLaunchIntentForPackage(ANDROID_AUTO_PACKAGE)
+        )
+        for (intent in directIntents) {
+            try {
+                startActivity(intent)
+                return
+            } catch (_: Exception) {
+                // Activity missing or not exported on this Android version/ROM; try next option.
+            }
+        }
+
+        if (isPackageInstalled(ANDROID_AUTO_PACKAGE)) {
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", ANDROID_AUTO_PACKAGE, null)
+                    )
+                )
+                Toast.makeText(
+                    this,
+                    "Pilih 'Pengaturan tambahan di aplikasi' untuk membuka pengaturan Android Auto.",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            } catch (_: Exception) {
+                // Fall back to main system settings below.
+            }
+        }
+
+        startActivity(Intent(Settings.ACTION_SETTINGS))
+        Toast.makeText(
+            this,
+            "Buka Pengaturan HP lalu cari 'Android Auto'.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    private fun isPackageInstalled(packageName: String): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0)
+            }
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+    }
+
+    companion object {
+        private const val ANDROID_AUTO_PACKAGE = "com.google.android.projection.gearhead"
+        private const val ANDROID_AUTO_SETTINGS_ACTIVITY =
+            "com.google.android.projection.gearhead.companion.settings.DefaultSettingsActivity"
     }
 }
